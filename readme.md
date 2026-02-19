@@ -90,8 +90,3 @@ if plc.plcConnect("192.168.3.250"):
 ```
 
 ---
-
-### **Next Steps for your GitHub:**
-
-1. **Create `requirements.txt**`: Run `pip freeze > requirements.txt` in your terminal.
-2. **Add a License**: Consider adding an MIT License so others can use your code.
