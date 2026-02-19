@@ -95,5 +95,3 @@ if plc.plcConnect("192.168.3.250"):
 
 1. **Create `requirements.txt**`: Run `pip freeze > requirements.txt` in your terminal.
 2. **Add a License**: Consider adding an MIT License so others can use your code.
-
-Would you like me to help you generate a **`.gitignore`** file so you don't upload unnecessary Python cache files to your repository?
