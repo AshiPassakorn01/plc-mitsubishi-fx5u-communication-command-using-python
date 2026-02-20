@@ -4,6 +4,15 @@ class PLCController:
     def __init__(self, config_print: bool = True):
         self.client = None
         self.config_print = config_print
+        
+        # ----------------------------------------------------
+        # Modbus Address Offsets 
+        # (แก้ไขให้ตรงกับ Modbus Device Assignment ใน GX Works3)
+        # ----------------------------------------------------
+        self.offset_y = 0      # สมมติ Y เริ่มที่ Modbus Address 0
+        self.offset_m = 8192   # สมมติ M เริ่มที่ Modbus Address 8192
+        self.offset_d = 0      # สมมติ D เริ่มที่ Holding Register 0
+        self.offset_x = 0      # สมมติ X เริ่มที่ Input Register 0
 
     def _display(self, message: str):
         if self.config_print:
@@ -37,27 +46,31 @@ class PLCController:
     # ----------------------------------------------------
     
     def write_Y(self, address: int, status: bool) -> bool:
-        return self._execute_write_coil(address, status, "Output Y")
+        # บวก Offset ของ Y เข้าไป
+        modbus_addr = address + self.offset_y
+        return self._execute_write_coil(modbus_addr, status, f"Output Y{address}")
 
     def write_M(self, address: int, status: bool) -> bool:
-        return self._execute_write_coil(address, status, "Relay M")
+        # บวก Offset ของ M เข้าไป
+        modbus_addr = address + self.offset_m
+        return self._execute_write_coil(modbus_addr, status, f"Relay M{address}")
 
-    def _execute_write_coil(self, address: int, status: bool, label: str) -> bool:
+    def _execute_write_coil(self, modbus_address: int, status: bool, label: str) -> bool:
         if not self.client or not self.client.is_socket_open():
             self._display("Error: Not connected!")
             return False
         
         try:
-            result = self.client.write_coil(address, status)
+            result = self.client.write_coil(modbus_address, status)
             if not result.isError():
                 state_str = "ON" if status else "OFF"
-                self._display(f"Wrote {label} {address} -> {state_str}")
+                self._display(f"Wrote {label} (Addr: {modbus_address}) -> {state_str}")
                 return True
             else:
-                self._display(f"Modbus Error writing {label} {address}")
+                self._display(f"Modbus Error writing {label}")
                 return False
         except Exception as e:
-            self._display(f"Exception writing {label} {address}: {e}")
+            self._display(f"Exception writing {label}: {e}")
             return False
 
     def write_holding(self, address: int, value: int) -> bool:
@@ -65,13 +78,14 @@ class PLCController:
             self._display("Error: Not connected!")
             return False
             
+        modbus_addr = address + self.offset_d
         try:
-            result = self.client.write_register(address, int(value))
+            result = self.client.write_register(modbus_addr, int(value))
             if not result.isError():
-                self._display(f"Wrote Holding Register {address} -> {int(value)}")
+                self._display(f"Wrote Holding Reg D{address} (Addr: {modbus_addr}) -> {int(value)}")
                 return True
             else:
-                self._display(f"Write Holding Error at Address {address}")
+                self._display(f"Write Holding Error at D{address}")
                 return False
         except Exception as e:
             self._display(f"Write Holding Exception: {e}")
@@ -86,32 +100,42 @@ class PLCController:
             self._display("Error: Not connected!")
             return 0.0, False
             
+        modbus_addr = address + self.offset_d
         try:
-            result = self.client.read_holding_registers(address, count=1)
+            result = self.client.read_holding_registers(modbus_addr, count=1)
             if not result.isError():
                 val = float(result.registers[0])
-                self._display(f"Read Register {address} -> {val}")
+                self._display(f"Read Reg D{address} (Addr: {modbus_addr}) -> {val}")
                 return val, True
             else:
-                self._display(f"Read Error at Address {address}")
+                self._display(f"Read Error at D{address}")
                 return 0.0, False
         except Exception as e:
             self._display(f"Read Exception: {e}")
             return 0.0, False
-        
-    def read_coil(self, address: int) -> tuple[bool, bool]:
+
+    # แยกฟังก์ชันอ่าน Y และ M ออกจากกันให้ชัดเจน
+    def read_Y(self, address: int) -> tuple[bool, bool]:
+        modbus_addr = address + self.offset_y
+        return self._execute_read_coil(modbus_addr, f"Output Y{address}")
+
+    def read_M(self, address: int) -> tuple[bool, bool]:
+        modbus_addr = address + self.offset_m
+        return self._execute_read_coil(modbus_addr, f"Relay M{address}")
+
+    def _execute_read_coil(self, modbus_address: int, label: str) -> tuple[bool, bool]:
         if not self.client or not self.client.is_socket_open():
             self._display("Error: Not connected!")
             return False, False
             
         try:
-            result = self.client.read_coils(address, count=1)
+            result = self.client.read_coils(modbus_address, count=1)
             if not result.isError():
                 val = result.bits[0]
-                self._display(f"Read M/Y Address {address} -> {'ON' if val else 'OFF'}")
+                self._display(f"Read {label} (Addr: {modbus_address}) -> {'ON' if val else 'OFF'}")
                 return val, True
             else:
-                self._display(f"Read Error at M/Y Address {address}")
+                self._display(f"Read Error at {label}")
                 return False, False
         except Exception as e:
             self._display(f"Read Exception: {e}")
@@ -122,14 +146,15 @@ class PLCController:
             self._display("Error: Not connected!")
             return False, False
             
+        modbus_addr = address + self.offset_x
         try:
-            result = self.client.read_discrete_inputs(address, count=1)
+            result = self.client.read_discrete_inputs(modbus_addr, count=1)
             if not result.isError():
                 val = result.bits[0]
-                self._display(f"Read X Address {address} -> {'ON' if val else 'OFF'}")
+                self._display(f"Read Input X{address} (Addr: {modbus_addr}) -> {'ON' if val else 'OFF'}")
                 return val, True
             else:
-                self._display(f"Read Error at X Address {address}")
+                self._display(f"Read Error at X{address}")
                 return False, False
         except Exception as e:
             self._display(f"Read Exception: {e}")

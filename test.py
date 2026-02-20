@@ -5,13 +5,14 @@ from tkinter import messagebox
 from plc_module import PLCController
 
 def run_plc_test():
+    # Set config_print=False to keep the console output clean during loops
     plc = PLCController(config_print=False)
     
     IP_ADDRESS = "192.168.3.250"
     PORT = 502
     
     print("="*70)
-    print("Starting Group Read/Write PLC Test with Random Values")
+    print("Starting Group Read/Write PLC Test with Random Values (Offset Version)")
     print("="*70)
     
     if plc.plcConnect(IP_ADDRESS, port=PORT):
@@ -37,7 +38,7 @@ def run_plc_test():
         print(f"   Sent random M0-M20 : {sent_m_list}")
         print(f"   Sent random D0-D20 : {sent_d_list}")
         
-        time.sleep(2)
+        time.sleep(1)
 
         # --------------------------------------------------
         # Step 2: Read all values into lists and print for comparison
@@ -47,10 +48,12 @@ def run_plc_test():
         list_x = [plc.read_input(address=i)[0] for i in range(18)]
         print(f"   Read X0-X17  : {list_x}")
         
-        list_y = [plc.read_coil(address=i)[0] for i in range(18)]
+        # Updated to use read_Y instead of read_coil
+        list_y = [plc.read_Y(address=i)[0] for i in range(18)]
         print(f"   Read Y0-Y17  : {list_y}")
         
-        list_m = [plc.read_coil(address=i)[0] for i in range(21)]
+        # Updated to use read_M instead of read_coil
+        list_m = [plc.read_M(address=i)[0] for i in range(21)]
         print(f"   Read M0-M20  : {list_m}")
         
         list_d = []
@@ -73,6 +76,9 @@ def run_plc_test():
         print(f"   M values match: {is_m_match}")
         print(f"   D values match: {is_d_match}")
 
+        # You can visually verify if Y values stayed OFF (or in their original state)
+        # while M values changed randomly.
+
         # --------------------------------------------------
         # Step 3: Reset M and D values to 0 / OFF
         # --------------------------------------------------
@@ -81,13 +87,13 @@ def run_plc_test():
             plc.write_M(address=i, status=False)
             plc.write_holding(address=i, value=0)
         
-        time.sleep(2)
+        time.sleep(1)
 
         # --------------------------------------------------
         # Step 4: Read M and D again to confirm reset
         # --------------------------------------------------
         print("\n[4] Values after reset:")
-        list_m_reset = [plc.read_coil(address=i)[0] for i in range(21)]
+        list_m_reset = [plc.read_M(address=i)[0] for i in range(21)]
         print(f"   Reset M0-M20 : {list_m_reset}")
         
         list_d_reset = [int(plc.read_holding(address=i)[0]) for i in range(21)]
@@ -102,11 +108,11 @@ def run_plc_test():
         # Show Pop-up Result
         # --------------------------------------------------
         root = tk.Tk()
-        root.withdraw() # Hide the main empty tkinter window
-        root.attributes('-topmost', True) # Bring pop-up to the front
+        root.withdraw() 
+        root.attributes('-topmost', True) 
         
         if test_passed:
-            messagebox.showinfo("Test Result", "Success!\nAll read values perfectly match the sent random values.")
+            messagebox.showinfo("Test Result", "Success!\nAll read values perfectly match the sent random values.\nCheck console to verify Y state did not overlap with M.")
         else:
             messagebox.showerror("Test Result", "Error!\nMismatch detected between sent values and read values. Please check the console log.")
             
