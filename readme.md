@@ -13,7 +13,6 @@ This module requires Python 3.x and the `pymodbus` library.
 pip install pymodbus
 
 ```
-
 ## Project Structure
 
 * **`plc_module.py`**: The core library containing the `PLCController` class.
