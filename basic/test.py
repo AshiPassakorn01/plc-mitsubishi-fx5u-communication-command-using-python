@@ -2,7 +2,7 @@ import time
 import random
 import tkinter as tk
 from tkinter import messagebox
-from plc_module import PLCController
+from basic.plc_module import PLCController
 
 def run_plc_test():
     # Set config_print=False to keep the console output clean during loops

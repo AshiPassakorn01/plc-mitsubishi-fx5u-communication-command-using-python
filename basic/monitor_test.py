@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import messagebox
-from plc_module import PLCController
+from basic.plc_module import PLCController
 
 class PLCMonitorGUI:
     def __init__(self, root):
