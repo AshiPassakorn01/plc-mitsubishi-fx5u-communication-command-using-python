@@ -6,7 +6,6 @@ sys.path.insert(0, parent_dir)
 import time
 from tkinter import messagebox
 from basic.plc_module import PLCController 
-from position_monitor import ServoMonitorUI
 
 import tkinter as tk
 
@@ -15,6 +14,7 @@ plc = PLCController(config_print=True)
 IP_ADDRESS = "192.168.3.250"
 PORT = 502
 plc.plcConnect(IP_ADDRESS, port=PORT)
+
 def ddrvi(ENO=True, MODE="pulse", TARGET=0, SPEED=0, PPR=10000, AXIS=1, REPORT=False):
     if not ENO:
         print(f">> [Axis {AXIS}] ENO is False. Command aborted.")
@@ -207,15 +207,6 @@ def ddrvi_sync_intp(commands):
         t.join()
         
     print(">> [SYNC INTP] Interpolation movement completed.\n")
-
-def monitoring():
-    def launch_monitor():
-        monitor_window = tk.Tk()
-        app = ServoMonitorUI(monitor_window, plc)
-        monitor_window.mainloop()
-    
-    ui_thread = threading.Thread(target=launch_monitor, daemon=True)
-    ui_thread.start()
     
 def test_servo(axis=1, ppr=3600):
     def test_low_speed(test_axis, test_ppr, DIRECTION="forward"):
@@ -287,35 +278,12 @@ def test_servo(axis=1, ppr=3600):
     # rapid direction change test
     print(f">> Running Rapid Direction Change Test on Axis {axis}...")
     struggle_test2(axis, ppr)
+   
+    #opr
+    ddrvi(MODE="rev", TARGET=-1, SPEED=100, PPR=ppr, AXIS=axis, REPORT=False)  
     
     messagebox.showinfo("Test Completed", f"All servo motion tests on Axis {axis} have been completed successfully!")
     
     print("\n" + "="*50)
     print(f"TEST SEQUENCE ON AXIS {axis} COMPLETED SUCCESSFULLY")
     print("="*50)
-    
-if __name__ == "__main__":        
-    monitoring()
-    MOTOR_PPR1 = 36000
-    MOTOR_PPR2 = 360000
-    """sync_tasks1 = [
-        {"AXIS": 1, "MODE": "pulse", "TARGET": MOTOR_PPR1,  "SPEED": 3600, "PPR": MOTOR_PPR1 },
-        {"AXIS": 2, "MODE": "pulse", "TARGET": MOTOR_PPR2,                "PPR": MOTOR_PPR2},
-        {"AXIS": 3, "MODE": "pulse", "TARGET": MOTOR_PPR1,               "PPR": MOTOR_PPR2}
-    ]
-    
-    ddrvi_sync_intp(sync_tasks1)"""
-    
-    """ddrvi(MODE="rev", TARGET=1, SPEED=100, PPR=MOTOR_PPR1, AXIS=1, REPORT=False)
-    ddrvi(MODE="rev", TARGET=1, SPEED=50, PPR=MOTOR_PPR1, AXIS=2, REPORT=False)
-    ddrvi(MODE="rev", TARGET=1, SPEED=50, PPR=MOTOR_PPR1, AXIS=3, REPORT=False)
-
-    time.sleep(2)
-    
-    ddrvi_sync_intp([{"AXIS": 1, "MODE": "rev", "TARGET": 10, "SPEED": 100, "PPR": MOTOR_PPR1},
-                      {"AXIS": 2, "MODE": "rev", "TARGET": 5, "PPR": MOTOR_PPR1},
-                      {"AXIS": 3, "MODE": "rev", "TARGET": 1, "PPR": MOTOR_PPR1}])"""
-                      
-    test_servo(ppr=MOTOR_PPR1, axis=1)
-
-    print("--- Finished ---")
