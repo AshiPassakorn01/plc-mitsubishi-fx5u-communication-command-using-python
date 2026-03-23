@@ -1,289 +1,392 @@
-import os , sys
+import os, sys
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.insert(0, parent_dir)
 
 import time
+import threading  
+import keyboard
 from tkinter import messagebox
-from basic.plc_module import PLCController 
-
 import tkinter as tk
 
-# Initialize PLC Connection
-plc = PLCController(config_print=True)
-IP_ADDRESS = "192.168.3.250"
-PORT = 502
-plc.plcConnect(IP_ADDRESS, port=PORT)
+from basic.plc_module import PLCController 
+  
+class ServoController:
+    def __init__(self, ip="192.168.3.250", port=502):
+        self.plc = PLCController(config_print=True)
+        self.ip = ip
+        self.port = port
+        self.e_stop_active = False  # Flag Emergency Stop
 
-def ddrvi(ENO=True, MODE="pulse", TARGET=0, SPEED=0, PPR=10000, AXIS=1, REPORT=False):
-    if not ENO:
-        print(f">> [Axis {AXIS}] ENO is False. Command aborted.")
-        return False
+    def start(self):
+        #START Triggered when the program starts. Connect to PLC and set up Emergency Stop hotkey.
+        print(">> Initializing Servo System...")       
+        self.plc.plcConnect(self.ip, port=self.port)
+        
+        self.e_stop_active = False
+        try:
+            self.plc.write_M(address=899, status=False)
+        except Exception as e:
+            print(f">> [Warning] Cannot reset M899 on PLC: {e}")
 
-    def calculate_motion_params():
-        if MODE.lower() == "pulse":
-            pos = int(TARGET)
-            spd = int(SPEED)
-        elif MODE.lower() == "rev":
-            pos = round(TARGET * PPR)
-            spd = round((SPEED * PPR) / 60.0)
-        elif MODE.lower() == "deg":
-            pos = round((TARGET / 360.0) * PPR)
-            spd = round((SPEED / 360.0) * PPR)
-        else:
-            raise ValueError(f"Unknown MODE: '{MODE}'. Use 'pulse', 'rev', or 'deg'.")
-        return pos, spd
+        # Spacebar add to key of Emergency Stop
+        keyboard.add_hotkey('space', self.trigger_estop)
+        
+        print(">> Servo System STARTED. [Press 'SPACEBAR' anywhere for EMERGENCY STOP]")
 
-    def report_status(message, msgtype=None):
-        if REPORT:
-            if msgtype == -1:
-                messagebox.showerror("DDRVI Status", message)
-            elif msgtype == 0:
-                messagebox.showinfo("DDRVI Status", message)
+    def trigger_estop(self):
+        # call when spacebar is pressed
+        if not self.e_stop_active:
+            self.e_stop_active = True
+            print("\n" + "!"*50)
+            print("!!! EMERGENCY STOP TRIGGERED (SPACEBAR PRESSED) !!!")
+            print("!"*50)
 
-    try:
-        final_position, final_speed = calculate_motion_params()
-    except Exception as e:
-        if REPORT:
-            messagebox.showerror("DDRVI Error", str(e))
-        print(f">> [Axis {AXIS}] Error: {str(e)}")
-        return False
+            try:
+                self.plc.write_M(address=899, status=True)
+                print(">> Sent M899 = ON to PLC successfully.")
+            except Exception as e:
+                print(f">> Failed to send E-Stop to PLC: {e}")
 
-    if final_speed == 0:
-        if REPORT:
-            messagebox.showerror("DDRVI Error", f"Calculated speed cannot be zero on Axis {AXIS}!")
-        return False
-
-    timeout = (abs(final_position) / final_speed) * 2.0 + 5.0 
-    
-    trigger_addr = AXIS * 100        # M100, M200, M300, M400
-    pos_addr = AXIS * 100            # D100, D200, D300, D400
-    spd_addr = (AXIS * 100) + 2      # D102, D202, D302, D402
-    axis_reg_addr = (AXIS * 100) + 4 # D104, D204, D304, D404
-    sig_addr = (AXIS * 100) + 10     # M110, M210, M310, M410
-
-    PLCDATA = {
-        "position": pos_addr, 
-        "speed": spd_addr,  
-        "axis_reg": axis_reg_addr,
-        "done": sig_addr,        
-        "err": sig_addr + 1      
-    }
-    
-    plc.write_M(address=PLCDATA["done"], status=False)
-    plc.write_M(address=PLCDATA["err"], status=False)
-    
-    plc.write_holding_32bit(address=PLCDATA["position"], value=final_position)
-    plc.write_holding_32bit(address=PLCDATA["speed"], value=final_speed)
-    plc.write_holding_32bit(address=PLCDATA["axis_reg"], value=AXIS)
-    
-    print(f">> [Axis {AXIS}] Mode: {MODE.upper()} | Target: {TARGET}, Speed: {SPEED}")
-    print(f">> [Axis {AXIS}] Sending Start Command (M{trigger_addr}): Pos(D{pos_addr})={final_position}, Speed(D{spd_addr})={final_speed}, AxisReg(D{axis_reg_addr})={AXIS}")
-    
-    plc.pulse_M(address=trigger_addr, duration=0.1, blocking=True)  
-    
-    start_time = time.time()
-    while True:
-        curr_speed = plc.read_holding_32bit(PLCDATA["speed"])[0]
-        if (time.time() - start_time) > timeout:
-            messagebox.showerror("Timeout Error", f"Axis {AXIS} operation timed out!")
+    def ddrvi(self, ENO=True, MODE="pulse", TARGET=0, SPEED=0, PPR=10000, AXIS=1, REPORT=False):
+        if self.e_stop_active:
+            print(f">> [Axis {AXIS}] Blocked: Emergency Stop is active.")
             return False
-            
-        is_done, _ = plc.read_M(address=PLCDATA["done"])
-        is_err, _ = plc.read_M(address=PLCDATA["err"])
-        
-        if is_err:
-            report_status(f"Error occurred during servo operation on Axis {AXIS}!", msgtype=-1)
+
+        if not ENO:
+            print(f">> [Axis {AXIS}] ENO is False. Command aborted.")
             return False
-            
-        if is_done:
-            plc.write_M(address=PLCDATA["done"], status=False)
-            report_status(f"Servo operation completed successfully on Axis {AXIS}!", msgtype=0)
-            print(f">> [Axis {AXIS}] Movement Finished.\n")
-            return True
-            
-        time.sleep(0.1)
-        
-import threading
 
-def ddrvi_sync(commands):
-
-    threads = []
-    
-    for cmd in commands:
-        t = threading.Thread(target=ddrvi, kwargs=cmd)
-        threads.append(t)
-        
-    for t in threads:
-        t.start()
-        
-    for t in threads:
-        t.join()
-        
-    print(">> [SYNC] All synchronized axes have completed their movements.\n")
-
-def ddrvi_sync_intp(commands):
-    def get_pulse(mode, target, ppr):
-        if mode == "pulse": return int(target)
-        if mode == "rev": return round(target * ppr)
-        if mode == "deg": return round((target / 360.0) * ppr)
-        raise ValueError(f"Unknown MODE: '{mode}'")
-
-    def get_pps(mode, speed, ppr):
-        if mode == "pulse": return int(speed)
-        if mode == "rev": return round((speed * ppr) / 60.0)
-        if mode == "deg": return round((speed / 360.0) * ppr)
-        raise ValueError(f"Unknown MODE: '{mode}'")
-
-    ref_cmd = None
-    speed_count = 0
-    
-    for cmd in commands:
-        speed_val = cmd.get("SPEED", 0)
-        if speed_val is not None and speed_val > 0:
-            speed_count += 1
-            ref_cmd = cmd
-            
-    if speed_count != 1:
-        raise ValueError(f"Interpolation Error: Only 1 Reference speed is allowed (found {speed_count} axes with SPEED set)")
-
-    ref_mode = ref_cmd.get("MODE", "pulse").lower()
-    ref_target = ref_cmd["TARGET"]
-    ref_speed = ref_cmd["SPEED"]
-    ref_ppr = ref_cmd.get("PPR", 10000)
-    
-    ref_pulse = get_pulse(ref_mode, ref_target, ref_ppr)
-    ref_pps = get_pps(ref_mode, ref_speed, ref_ppr)
-    
-    if ref_pulse == 0:
-        raise ValueError("Interpolation Error: Reference Axis Position (TARGET) must not be 0")
-        
-    time_required = abs(ref_pulse) / ref_pps
-    
-    print("\n" + "="*50)
-    print(f"INTERPOLATION DRIVE (Est. Time: {time_required:.3f} sec)")
-    print("="*50)
-
-    threads = []
-    
-    for cmd in commands:
-        axis = cmd["AXIS"]
-        mode = cmd.get("MODE", "pulse").lower()
-        target = cmd["TARGET"]
-        ppr = cmd.get("PPR", 10000)
-        report = cmd.get("REPORT", False)
-        
-        target_pulse = get_pulse(mode, target, ppr)
-        
-        if cmd == ref_cmd:
-            speed_pps = ref_pps
-        else:
-            if target_pulse == 0:
-                speed_pps = 0
+        def calculate_motion_params():
+            if MODE.lower() == "pulse":
+                pos = int(TARGET)
+                spd = int(SPEED)
+            elif MODE.lower() == "rev":
+                pos = round(TARGET * PPR)
+                spd = round((SPEED * PPR) / 60.0)
+            elif MODE.lower() == "deg":
+                pos = round((TARGET / 360.0) * PPR)
+                spd = round((SPEED / 360.0) * PPR)
             else:
-                speed_pps = round(abs(target_pulse) / time_required)
-                if speed_pps == 0: speed_pps = 1 # ป้องกันความเร็วเป็น 0 ถ้าระยะสั้นมาก
-                
-        print(f"   ┣ [Axis {axis}] Target: {target_pulse} pulses, Sync Speed: {speed_pps} pps")
+                raise ValueError(f"Unknown MODE: '{MODE}'. Use 'pulse', 'rev', or 'deg'.")
+            return pos, spd
+
+        def report_status(message, msgtype=None):
+            if REPORT:
+                if msgtype == -1:
+                    messagebox.showerror("DDRVI Status", message)
+                elif msgtype == 0:
+                    messagebox.showinfo("DDRVI Status", message)
+
+        try:
+            final_position, final_speed = calculate_motion_params()
+        except Exception as e: 
+            if REPORT: messagebox.showerror("DDRVI Error", str(e))
+            print(f">> [Axis {AXIS}] Error: {str(e)}")
+            return False
+
+        if final_speed == 0:
+            if REPORT: messagebox.showerror("DDRVI Error", f"Calculated speed cannot be zero on Axis {AXIS}!")
+            return False
+
+        timeout = (abs(final_position) / final_speed) * 2.0 + 5.0 
         
-        sync_kwargs = {
-            "MODE": "pulse",
-            "TARGET": target_pulse,
-            "SPEED": speed_pps,
-            "PPR": ppr,
-            "AXIS": axis,
-            "REPORT": report
+        trigger_addr = AXIS * 100        
+        pos_addr = AXIS * 100            
+        spd_addr = (AXIS * 100) + 2      
+        axis_reg_addr = (AXIS * 100) + 4 
+        sig_addr = (AXIS * 100) + 10     
+
+        PLCDATA = {
+            "position": pos_addr, 
+            "speed": spd_addr,  
+            "axis_reg": axis_reg_addr,
+            "done": sig_addr,        
+            "err": sig_addr + 1      
         }
         
-        t = threading.Thread(target=ddrvi, kwargs=sync_kwargs)
-        threads.append(t)
+        self.plc.write_M_batch(address=PLCDATA["done"], values=[False, False])
+        self.plc.write_holding_32bit_batch(address=PLCDATA["position"], values=[final_position, final_speed, AXIS])
+        
+        print(f">> [Axis {AXIS}] Mode: {MODE.upper()} | Target: {TARGET}, Speed: {SPEED}")
+        print(f">> [Axis {AXIS}] Sending Start Command (M{trigger_addr}): Pos={final_position}, Speed={final_speed}")
+        
+        self.plc.pulse_M(address=trigger_addr, duration=0.1, blocking=False)  
+        
+        start_time = time.time()
+        while True:
+            # --- E-STOP CHECK --- 
+            #  Spacebar pressed = break Break 
+            if self.e_stop_active:
+                print(f">> [Axis {AXIS}] Sequence aborted due to E-Stop!")
+                return False
 
-    print(">> Triggering All Axes Simultaneously...\n")
-    
-    for t in threads:
-        t.start()
-        
-    for t in threads:
-        t.join()
-        
-    print(">> [SYNC INTP] Interpolation movement completed.\n")
-    
-def test_servo(axis=1, ppr=3600):
-    def test_low_speed(test_axis, test_ppr, DIRECTION="forward"):
-        for i in range(1, 4):
-            if DIRECTION == "forward":
-                target = 1
-            else:
-                target = -1
+            if (time.time() - start_time) > timeout:
+                messagebox.showerror("Timeout Error", f"Axis {AXIS} operation timed out!")
+                return False
                 
-            ddrvi(MODE="rev", TARGET=target, SPEED=50*i, PPR=test_ppr, AXIS=test_axis, REPORT=False)
-            time.sleep(0.5)
-            
-    def test_high_speed(test_axis, test_ppr, DIRECTION="forward"):
-        for i in range(3):
-            if DIRECTION == "forward":
-                target = 2
+            bits, success = self.plc.read_M_batch(address=PLCDATA["done"], count=2)
+            if success:
+                is_done, is_err = bits[0], bits[1]
             else:
-                target = -2
+                is_done, is_err = False, False
             
-            ddrvi(MODE="rev", TARGET=target, SPEED=300+100*i, PPR=test_ppr, AXIS=test_axis, REPORT=False)
-            time.sleep(0.5)
+            if is_err:
+                report_status(f"Error occurred during servo operation on Axis {AXIS}!", msgtype=-1)
+                return False
+                
+            if is_done:
+                self.plc.write_M(address=PLCDATA["done"], status=False)
+                report_status(f"Servo operation completed successfully on Axis {AXIS}!", msgtype=0)
+                print(f">> [Axis {AXIS}] Movement Finished.\n")
+                return True
+                
+            time.sleep(0.01)
+
+    def ddrvi_sync(self, commands):
+        if self.e_stop_active: return
+        threads = []
+        for cmd in commands:
+            t = threading.Thread(target=self.ddrvi, kwargs=cmd)
+            threads.append(t)
+        for t in threads: t.start()
+        for t in threads: t.join()
+        if not self.e_stop_active:
+            print(">> [SYNC] All synchronized axes have completed their movements.\n")
             
-    def struggle_test1(test_axis, test_ppr, SECTIONS=4, DIRECTION="forward"):
-        for i in range(SECTIONS):
-            if DIRECTION == "forward":
-                target = 1.0/SECTIONS
+    def ddrva(self, ENO=True, MODE="pulse", TARGET=0, SPEED=0, PPR=10000, AXIS=1, REPORT=False):
+    # DDRVA (Direct Distance Relative Move) - Move a relative distance based on current position
+        if self.e_stop_active:
+            print(f">> [Axis {AXIS}] Blocked: Emergency Stop is active.")
+            return False
+
+        if not ENO:
+            print(f">> [Axis {AXIS}] ENO is False. Command aborted.")
+            return False
+
+        # read current position in pulses   
+        current_pulse = self.current_position(axis=AXIS)
+        
+        if current_pulse is None:
+            print(f">> [Axis {AXIS}] Error: failed to read current position for DDRVA ")
+            if REPORT: messagebox.showerror("DDRVA Error", f"Failed to read current position on Axis {AXIS}")
+            return False
+
+        # Transform current position to the same unit as TARGET based on MODE
+        try:
+            if MODE.lower() == "pulse":
+                current_pos = current_pulse
+            elif MODE.lower() == "rev":
+                current_pos = current_pulse / float(PPR)
+            elif MODE.lower() == "deg":
+                current_pos = (current_pulse / float(PPR)) * 360.0
             else:
-                target = -1.0/SECTIONS
-            ddrvi(MODE="rev", TARGET=target, SPEED=500, PPR=test_ppr, AXIS=test_axis, REPORT=False)
-            time.sleep(0.1)
-    
-    def struggle_test2(test_axis, test_ppr):
-        for i in range(10):
-            ddrvi(MODE="rev", TARGET=0.25, SPEED=150, PPR=test_ppr, AXIS=test_axis, REPORT=False)
-            time.sleep(0.1)
+                raise ValueError(f"Unknown MODE: '{MODE}'. Use 'pulse', 'rev', or 'deg'.")
+        except ZeroDivisionError:
+            print(f">> [Axis {AXIS}] Error: PPR cannot be zero.")
+            return False
+
+        # calculate (Relative Distance)
+        relative_target = TARGET - current_pos
+
+        print(f">> [DDRVA Axis {AXIS}] Current Pos: {current_pos:.2f} {MODE} | Absolute Target: {TARGET} {MODE}")
+        print(f">> [DDRVA Axis {AXIS}] Calculated Relative Move: {relative_target:.2f} {MODE}")
+
+        if abs(relative_target) < 0.0001:
+            print(f">> [Axis {AXIS}] Already at the target position. No movement needed.\n")
+            return True
+
+        # call ddrvi with the calculated relative target and original parameters
+        return self.ddrvi(
+            ENO=ENO, 
+            MODE=MODE, 
+            TARGET=relative_target, 
+            SPEED=SPEED, 
+            PPR=PPR, 
+            AXIS=AXIS, 
+            REPORT=REPORT
+        )
+        
+    def ddrva_sync(self, commands):
+        if self.e_stop_active: return
+        threads = []
+        for cmd in commands:
+            t = threading.Thread(target=self.ddrva, kwargs=cmd)
+            threads.append(t)
+        for t in threads: t.start()
+        for t in threads: t.join()
+        if not self.e_stop_active:
+            print(">> [SYNC] All absolute synchronized axes have completed their movements.\n")
             
-            ddrvi(MODE="rev", TARGET=-0.15, SPEED=1000, PPR=test_ppr, AXIS=test_axis, REPORT=False)
-            time.sleep(0.1)
+    def linear_interpolation_abs(self, commands, ref_axis=1):
+        if self.e_stop_active:
+            print(">> [Interpolation ABS] Blocked: Emergency Stop is active.")
+            return False
+
+        print(f"\n>> [Interpolation ABS Start call Reference axis: {ref_axis}...")
+        
+        # 1. read current positions and calculate distances for all axes, while identifying the reference axis command
+        ref_distance = 0
+        ref_speed = 0
+        ref_found = False
+
+        for cmd in commands:
+            axis = cmd.get("AXIS")
+            target = cmd.get("TARGET", 0)
+            mode = cmd.get("MODE", "pulse").lower()
+            ppr = cmd.get("PPR", 10000)
+
+            # read current position in pulses for this axis
+            current_pulse = self.current_position(axis=axis)
+            if current_pulse is None:
+                print(f">> [Interpolation ABS] Error: Cannot read current position of axis {axis}")
+                return False
+
+            # transform current position to the same unit as TARGET based on MODE
+            if mode == "pulse":
+                current_pos = current_pulse
+            elif mode == "rev":
+                current_pos = current_pulse / float(ppr)
+            elif mode == "deg":
+                current_pos = (current_pulse / float(ppr)) * 360.0
+            else:
+                print(f">> [Interpolation ABS] Error: Mode {mode} INVALID for axis {axis} - use 'pulse', 'rev', or 'deg'.")
+                return False
+
+            # calculate movement distance to target
+            distance = target - current_pos
+            cmd["_distance"] = distance
+
+            # if this is the reference axis, store its distance and speed for interpolation
+            if axis == ref_axis:
+                ref_distance = abs(distance)
+                ref_speed = cmd.get("SPEED", 0)
+                ref_found = True
+
+        if not ref_found:
+            print(f">> [Interpolation ABS] Error: No reference axis (Axis {ref_axis}) found in commands")
+            return False
+
+        if ref_distance < 0.0001:
+            print(f">> [Interpolation ABS] Error: Reference axis is already at the target position. Cannot synchronize speeds.")
+            return False
+
+        # calculate speeds for Slave axes based on the reference axis
+        for cmd in commands:
+            axis = cmd.get("AXIS")
+            distance = cmd.pop("_distance")  # extract and remove temporary distance value
+            
+            if axis != ref_axis:
+                if abs(distance) < 0.0001:
+                    cmd["SPEED"] = 0  # if the slave axis is already at target, set speed to 0 to avoid unnecessary movement
+                else:
+                    # สมการ: Speed_slave = (|Distance_slave| * Speed_ref) / |Distance_ref|
+                    new_speed = (abs(distance) * ref_speed) / ref_distance
+                    cmd["SPEED"] = new_speed
+                    
+                print(f"   - Update axis {axis} (Slave)  | Target(ABS): {cmd.get('TARGET'):<6} | Run Distance: {distance:+.2f} | New Speed: {cmd.get('SPEED'):.2f}")
+            else:
+                print(f"   - Reference axis {axis} (Master) | Target(ABS): {cmd.get('TARGET'):<6} | Run Distance: {distance:+.2f} | Base Speed: {cmd.get('SPEED'):.2f}")
+
+        # call ddrva_sync after updating speeds
+        self.ddrva_sync(commands)
+        
+        return True
+
+    def test_servo(self, axis=1, ppr=3600):
+        #  E-Stop Check
+        def check_estop():
+            return self.e_stop_active
+
+        def test_low_speed(test_axis, test_ppr, DIRECTION="forward"):
+            for i in range(1, 4):
+                if check_estop(): return
+                target = 1 if DIRECTION == "forward" else -1
+                self.ddrvi(MODE="rev", TARGET=target, SPEED=50*i, PPR=test_ppr, AXIS=test_axis, REPORT=False)
+                time.sleep(0.5)
+                
+        def test_high_speed(test_axis, test_ppr, DIRECTION="forward"):
+            for i in range(3):
+                if check_estop(): return
+                target = 2 if DIRECTION == "forward" else -2
+                self.ddrvi(MODE="rev", TARGET=target, SPEED=300+100*i, PPR=test_ppr, AXIS=test_axis, REPORT=False)
+                time.sleep(0.5)
+                
+        def struggle_test1(test_axis, test_ppr, SECTIONS=4, DIRECTION="forward"):
+            for i in range(SECTIONS):
+                if check_estop(): return
+                target = 1.0/SECTIONS if DIRECTION == "forward" else -1.0/SECTIONS
+                self.ddrvi(MODE="rev", TARGET=target, SPEED=500, PPR=test_ppr, AXIS=test_axis, REPORT=False)
+                time.sleep(0.1)
+        
+        def struggle_test2(test_axis, test_ppr):
+            for i in range(10):
+                if check_estop(): return
+                self.ddrvi(MODE="rev", TARGET=0.25, SPEED=150, PPR=test_ppr, AXIS=test_axis, REPORT=False)
+                time.sleep(0.1)
+                if check_estop(): return
+                self.ddrvi(MODE="rev", TARGET=-0.15, SPEED=1000, PPR=test_ppr, AXIS=test_axis, REPORT=False)
+                time.sleep(0.1)
+        
+        if check_estop(): return
+        print(f">> Running Basic Tests on Axis {axis}...")
+        self.ddrvi(MODE="rev", TARGET=1, SPEED=20, PPR=ppr*2, AXIS=axis, REPORT=False)
+        time.sleep(1)
+        
+        if check_estop(): return
+        self.ddrvi(MODE="rev", TARGET=-1, SPEED=20, PPR=ppr*2, AXIS=axis, REPORT=False)
+        time.sleep(1)
+        
+        print(f">> Running Speed Tests on Axis {axis}...")
+        test_low_speed(axis, ppr, DIRECTION="forward")
+        if check_estop(): return
+        test_low_speed(axis, ppr, DIRECTION="reverse")
+        if check_estop(): return
+        test_high_speed(axis, ppr, DIRECTION="forward")
+        if check_estop(): return
+        test_high_speed(axis, ppr, DIRECTION="reverse")
+        if check_estop(): return
+        
+        print(f">> Running Sectional Struggle Tests on Axis {axis}...")
+        struggle_test1(axis, ppr, DIRECTION="forward", SECTIONS=8)
+        if check_estop(): return
+        struggle_test1(axis, ppr, DIRECTION="reverse", SECTIONS=8)
+        if check_estop(): return
+        
+        print(f">> Running Rapid Direction Change Test on Axis {axis}...")
+        struggle_test2(axis, ppr)
+        if check_estop(): return
+       
+        self.ddrvi(MODE="rev", TARGET=-1, SPEED=100, PPR=ppr, AXIS=axis, REPORT=False)  
+        
+        if not self.e_stop_active:
+            messagebox.showinfo("Test Completed", f"All servo motion tests on Axis {axis} have been completed successfully!")
+            print("\n" + "="*50)
+            print(f"TEST SEQUENCE ON AXIS {axis} COMPLETED SUCCESSFULLY")
+            print("="*50)
+        else:
+            print("\n>> TEST ABORTED DUE TO EMERGENCY STOP.")
     
-    # basic forward and reverse tests
-    print(f">> Running Basic Tests on Axis {axis}...")
-    ddrvi(MODE="rev", TARGET=1, SPEED=20, PPR=ppr*2, AXIS=axis, REPORT=False)
-    time.sleep(1)
-    ddrvi(MODE="rev", TARGET=-1, SPEED=20, PPR=ppr*2, AXIS=axis, REPORT=False)
-    time.sleep(1)
     
-    # speed tests
-    print(f">> Running Speed Tests on Axis {axis}...")
-    test_low_speed(axis, ppr, DIRECTION="forward")
-    time.sleep(1)
-    test_low_speed(axis, ppr, DIRECTION="reverse")
-    time.sleep(1)
-    test_high_speed(axis, ppr, DIRECTION="forward")
-    time.sleep(1)
-    test_high_speed(axis, ppr, DIRECTION="reverse")
-    time.sleep(1)
+    def current_position(self, axis):
+        data_pos_addr = {1: 5500, 2: 5540, 3: 5580, 4: 5620}
+        
+        if not axis:
+            print(">> Missing axis number. __int__")
+            return None
+        if axis < 1 or axis > 4:
+            print(f">> Invalid axis number [1,2,3,4]. Given: {axis}")
+            return None 
+        
+        value, success = self.plc.read_holding_32bit(address=data_pos_addr[axis])
+        if success:
+            return value
+        else:
+            print(f">> Failed to read. Axis {axis}.")
+            return None
+        
+if __name__ == "__main__":
+    servo = ServoController()
+    servo.start()
     
-    # sectional struggle tests
-    print(f">> Running Sectional Struggle Tests on Axis {axis}...")
-    struggle_test1(axis, ppr, DIRECTION="forward", SECTIONS=8)
-    time.sleep(0.5)
-    struggle_test1(axis, ppr, DIRECTION="forward", SECTIONS=16)
-    time.sleep(0.5)
-    struggle_test1(axis, ppr, DIRECTION="reverse", SECTIONS=8)
-    time.sleep(0.5)
-    struggle_test1(axis, ppr, DIRECTION="reverse", SECTIONS=16)
-    time.sleep(0.5)
-    
-    # rapid direction change test
-    print(f">> Running Rapid Direction Change Test on Axis {axis}...")
-    struggle_test2(axis, ppr)
-   
-    #opr
-    ddrvi(MODE="rev", TARGET=-1, SPEED=100, PPR=ppr, AXIS=axis, REPORT=False)  
-    
-    messagebox.showinfo("Test Completed", f"All servo motion tests on Axis {axis} have been completed successfully!")
-    
-    print("\n" + "="*50)
-    print(f"TEST SEQUENCE ON AXIS {axis} COMPLETED SUCCESSFULLY")
-    print("="*50)
+    servo.test_servo(axis=1, ppr=3600)
